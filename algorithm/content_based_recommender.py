@@ -1,59 +1,68 @@
 import pandas as pd
 from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.preprocessing import MinMaxScaler
 from sklearn.metrics.pairwise import cosine_similarity
-from scipy.sparse import hstack
 
-def load_and_train_cb(music_path):
-    """加载音乐数据并训练 Content-Based 模型，返回计算好的数据和矩阵"""
-    df = pd.read_csv(music_path)
-    df = df.drop_duplicates(subset=['track_id']).reset_index(drop=True)
+def load_and_merge_data(music_path="../data/Music Info.csv", history_path="../data/User Listening History.csv"):
+    """
+    Automated pipeline to load, merge, and extract features for ALL models.
+    Ensures fair extraction time by pulling genre, artist, and playcount together.
+    """
+    # Load datasets
+    music_df = pd.read_csv(music_path)
+    listen_df = pd.read_csv(history_path)
     
-    # 清洗空值
-    df['tags'] = df['tags'].fillna('')
-    df['genre'] = df['genre'].fillna('')
-    df['name'] = df['name'].fillna('')
-    df['artist'] = df['artist'].fillna('')
+    # Merge datasets on track_id
+    merged_df = pd.merge(listen_df, music_df, on="track_id", how="inner")
     
-    # 1. 文本特征 (TF-IDF)
-    df['combined_text'] = (df['tags'] + " " + df['genre']).str.lower()
+    # Extract uniform features for all models (Fairness constraint)
+    # Content-based uses: track_id, name, artist, tags/genre
+    # Collab uses: user_id, track_id, playcount
+    final_df = merged_df[['user_id', 'track_id', 'playcount', 'name', 'artist', 'tags', 'genre']]
+    
+    # Drop duplicates for the content-based item matrix so we only compute unique songs
+    unique_songs = final_df.drop_duplicates(subset=['track_id']).reset_index(drop=True)
+    
+    # Clean text features: replace NaN with empty strings
+    unique_songs['genre'] = unique_songs['genre'].fillna('')
+    unique_songs['artist'] = unique_songs['artist'].fillna('')
+    unique_songs['tags'] = unique_songs['tags'].fillna('')
+    
+    # Combine features into a single string for content evaluation
+    unique_songs['combined_features'] = unique_songs['genre'] + " " + unique_songs['artist'] + " " + unique_songs['tags']
+    
+    return final_df, unique_songs
+
+def build_content_model(unique_songs_df):
+    """
+    Builds the TF-IDF matrix and computes Cosine Similarity for songs.
+    """
     tfidf = TfidfVectorizer(stop_words='english')
-    text_matrix = tfidf.fit_transform(df['combined_text'])
+    tfidf_matrix = tfidf.fit_transform(unique_songs_df['combined_features'])
     
-    # 2. 数值特征 (MinMaxScaler)
-    numerical_features = ['danceability', 'energy', 'loudness', 'speechiness', 
-                          'acousticness', 'instrumentalness', 'liveness', 'valence', 'tempo']
-    df[numerical_features] = df[numerical_features].fillna(0)
-    scaler = MinMaxScaler()
-    num_matrix = scaler.fit_transform(df[numerical_features])
-    
-    # 3. 合并特征并计算余弦相似度
-    combined_matrix = hstack([text_matrix, num_matrix])
-    similarity_matrix = cosine_similarity(combined_matrix, combined_matrix)
-    
-    return df, similarity_matrix
+    # Compute cosine similarity
+    cosine_sim = cosine_similarity(tfidf_matrix, tfidf_matrix)
+    return cosine_sim
 
-def get_cb_recommendations(song_name, df, similarity_matrix, top_n=10):
-    """输入歌名，返回 Top 10 推荐结果的 DataFrame"""
-    song_name_lower = str(song_name).lower().strip()
+def get_content_recommendations(song_name, unique_songs_df, cosine_sim, top_n=5):
+    """
+    Fetches top N recommendations based on song name.
+    """
+    exact_match = unique_songs_df[unique_songs_df['name'].str.lower() == song_name.lower()]
     
-    # 精确匹配歌名
-    exact_match = df[df['name'].str.lower() == song_name_lower]
-    
-    if exact_match.empty:
-        return pd.DataFrame({"Message": ["Song not found in Content-Based database."]})
+    if not exact_match.empty:
+        idx = exact_match.index[0]
+    else:
+        word_match = unique_songs_df[unique_songs_df['name'].str.contains(rf'\b{song_name}\b', case=False, regex=True, na=False)]
         
-    idx = exact_match.index[0]
+        if not word_match.empty:
+            idx = word_match.index[0]
+        else:
+            return ["Song not found in dataset."]
     
-    # 获取相似度分数并排序
-    sim_scores = list(enumerate(similarity_matrix[idx]))
+    sim_scores = list(enumerate(cosine_sim[idx]))
     sim_scores = sorted(sim_scores, key=lambda x: x[1], reverse=True)
     
-    # 提取前 N 首歌 (排除自己，所以从 1 开始)
-    top_indices = [i[0] for i in sim_scores[1:top_n+1]]
+    sim_scores = sim_scores[0:top_n]
+    song_indices = [i[0] for i in sim_scores]
     
-    # 返回 UI 需要的干净格式
-    result_df = df.iloc[top_indices][['name', 'artist', 'genre']].rename(
-        columns={'name': 'Song Name', 'artist': 'Artist', 'genre': 'Genre'}
-    )
-    return result_df
+    return unique_songs_df[['name', 'artist', 'genre']].iloc[song_indices]
