@@ -23,9 +23,10 @@ import pandas as pd
 import streamlit as st
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "src"))
-from recommender import HybridRecommender  # noqa: E402
-from item_cf import ItemBasedCF  # noqa: E402
-from evaluate import run_comparison, run_comparison_cold_start  # noqa: E402
+from src.recommender import HybridRecommender  # noqa: E402
+from src.item_cf import ItemBasedCF  # noqa: E402
+from src.evaluate import run_comparison, run_comparison_cold_start  # noqa: E402
+from src.content_based import ContentBasedRecommender  # noqa: E402
 
 ART_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "artifacts")
 
@@ -35,9 +36,9 @@ st.set_page_config(page_title="Hybrid Music Recommender", page_icon="🎵", layo
 # --------------------------------------------------------------------------- #
 # cached resources / data
 # --------------------------------------------------------------------------- #
-# @st.cache_resource
-# def load_content_based():
-#     return ContentBasedRecommender(ART_DIR)
+@st.cache_resource
+def load_content_based():
+    return ContentBasedRecommender(ART_DIR)
 
 @st.cache_resource(show_spinner="Loading recommender model & data ...")
 def load_recommender():
@@ -366,13 +367,13 @@ def dev_page(rec: HybridRecommender):
                 listened_tracks, _ = rec.user_history(compare_user_idx)
                 listened_set = set(int(x) for x in listened_tracks.tolist())
 
-            # 本來是feng的alforithm Content-only: alpha=1.0 according to recommender.py
-            content_results = rec.recommend(
-                user_idx=compare_user_idx,
+            # ============================================================
+            # FUNG'S CONTENT-BASED ALGORITHM CALL
+            # ============================================================
+            content_model = load_content_based()
+            content_results = content_model.recommend(
                 seed_track_idx=compare_seed_idx,
                 top_n=int(compare_top_n),
-                alpha=1.0,
-                exclude_listened=True,
             )
 
             # User's Item-Based CF: seed-song cosine similarity from historical
@@ -419,32 +420,18 @@ def dev_page(rec: HybridRecommender):
 
             with col_content:
                 st.markdown("#### Content-Based")
-                st.info(
-                    "Content-Based Filtering implementation will be added here."
-                )
-
-                # ============================================================
-                # TEAMMATE CONTENT-BASED ALGORITHM START
-                #
-                # Example:
-                #
-                # content_model = load_content_based()
-
-                # content_results = content_model.recommend(
-                #     seed_track_idx=compare_seed_idx,
-                #     top_n=int(compare_top_n),
-                # )
-                #
-                #content_df = pd.DataFrame(content_results)
-                #
-                # st.dataframe(
-                #     content_df[['name', 'artist', 'score']],
-                #     use_container_width=True,
-                #     hide_index=True,
-                # )
-                #
-                # TEAMMATE CONTENT-BASED ALGORITHM END
-                # ============================================================
+                
+                content_df = pd.DataFrame(content_results)
+                
+                if content_df.empty:
+                    st.warning("No recommendations found.")
+                else:
+                    st.dataframe(
+                        content_df[['name', 'artist', 'genre', 'score']]
+                        .style.format({'score': '{:.3f}'}),
+                        use_container_width=True,
+                        hide_index=True,
+                    )
 
             with col_cf:
                 st.markdown("#### Collaborative Filtering")
@@ -657,31 +644,149 @@ def dev_page(rec: HybridRecommender):
     with tab_content:
         st.header("🎼 Content-Based Filtering")
 
-        st.info(
-            "This section is reserved for the Content-Based Filtering "
-            "implementation and evaluation."
+        st.write(
+            "This model recommends songs based on audio features and tags "
+            "using Nearest Neighbors (Pure Content-Based)."
         )
-        # ============================================================
-        # TEAMMATE CONTENT-BASED ALGORITHM
-        # ============================================================
+        
+        content_model = load_content_based()
 
-        # Put teammate's recommendation demo here.
+        cb_query = st.text_input(
+            "Search a song",
+            placeholder="e.g. Shape of You",
+            key="cb_tab_song_search",
+        )
 
+        cb_top_n = st.number_input(
+            "Number of recommendations",
+            min_value=1,
+            max_value=30,
+            value=10,
+            step=1,
+            key="cb_tab_top_n",
+        )
+
+        cb_seed_idx = None
+        if cb_query:
+            hits = rec.search_tracks(cb_query, limit=12)
+
+            if not hits:
+                st.warning("No matching songs found.")
+            else:
+                options = {
+                    f"{h['name']} — {h['artist']} ({h['year']})": h["track_idx"]
+                    for h in hits
+                }
+
+                selected = st.selectbox(
+                    "Select the exact song",
+                    list(options.keys()),
+                    key="cb_tab_exact_song",
+                )
+                cb_seed_idx = options[selected]
+
+            if st.button(
+                "▶ Run Content-Based Filtering",
+                type="primary",
+                disabled=cb_seed_idx is None,
+                key="cb_tab_run",
+            ):
+                results = content_model.recommend(
+                    seed_track_idx=cb_seed_idx,
+                    top_n=int(cb_top_n),
+                )
+
+                if not results:
+                    st.warning("No recommendations found.")
+                else:
+                    cb_df = pd.DataFrame(results)
+                    st.dataframe(
+                        cb_df[["name", "artist", "genre", "score"]]
+                        .style.format({'score': '{:.3f}'}),
+                        use_container_width=True,
+                        hide_index=True,
+                    )
 
         st.divider()
         st.subheader("📊 Evaluation")
 
-        # Put teammate's evaluation here.
+        ev1, ev2 = st.columns(2)
 
+        cb_eval_k = ev1.slider(
+            "K (Top-K)",
+            min_value=5,
+            max_value=30,
+            value=10,
+            key="cb_eval_k",
+        )
+
+        cb_eval_users = ev2.slider(
+            "Number of evaluation users",
+            min_value=100,
+            max_value=3000,
+            value=500,
+            step=100,
+            key="cb_eval_users",
+        )
+
+        st.caption(
+            "Protocol: leave-one-out implicit feedback. "
+            "Most-played song = ground truth; "
+            "second most-played song = seed song."
+        )
+
+        if st.button(
+            "▶ Run Content-Based Evaluation",
+            type="primary",
+            key="run_cb_evaluation",
+        ):
+
+            import time
+
+            with st.spinner(
+                f"Evaluating Content-Based Filtering on "
+                f"{cb_eval_users} users..."
+            ):
+                start_time = time.time()
+
+                metrics = content_model.evaluate(
+                    history_source=rec,
+                    k=int(cb_eval_k),
+                    n_users=int(cb_eval_users),
+                    seed=42,
+                )
+                elapsed = time.time() - start_time
+
+            m1, m2, m3 = st.columns(3)
+
+            m1.metric(
+                f"Precision@{cb_eval_k}",
+                f"{metrics['precision_at_k']:.4f}",
+            )
+
+            m2.metric(
+                f"Recall@{cb_eval_k}",
+                f"{metrics['recall_at_k']:.4f}",
+            )
+
+            m3.metric(
+                f"F1@{cb_eval_k}",
+                f"{metrics['f1_at_k']:.4f}",
+            )
+
+            st.write(
+                f"**Hits:** {metrics['hits']} / "
+                f"{metrics['n_evaluated_users']} users "
+                f"· **Time:** {elapsed:.2f}s"
+            )
 
         st.divider()
         st.subheader("Model / data summary")
-
-        # Put teammate's model/data summary here.
-
-        # ============================================================
-        # END CONTENT-BASED SECTION
-        # ============================================================
+        
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Tracks in catalogue", f"{len(content_model.music_info):,}")
+        c2.metric("Algorithm", "Nearest Neighbors (KNN)")
+        c3.metric("Features used", "Audio Features & Tags")
 
     # ------------------------------------------------------------------ #
     # Hybrid — KEEP the existing Hybrid evaluation tab unchanged
