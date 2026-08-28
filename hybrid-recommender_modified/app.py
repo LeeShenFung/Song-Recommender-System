@@ -35,9 +35,9 @@ st.set_page_config(page_title="Hybrid Music Recommender", page_icon="🎵", layo
 # --------------------------------------------------------------------------- #
 # cached resources / data
 # --------------------------------------------------------------------------- #
-@st.cache_resource
-def load_content_based():
-    return ContentBasedRecommender(ART_DIR)
+# @st.cache_resource
+# def load_content_based():
+#     return ContentBasedRecommender(ART_DIR)
 
 @st.cache_resource(show_spinner="Loading recommender model & data ...")
 def load_recommender():
@@ -428,20 +428,20 @@ def dev_page(rec: HybridRecommender):
                 #
                 # Example:
                 #
-                content_model = load_content_based()
+                # content_model = load_content_based()
 
-                content_results = content_model.recommend(
-                    seed_track_idx=compare_seed_idx,
-                    top_n=int(compare_top_n),
-                )
+                # content_results = content_model.recommend(
+                #     seed_track_idx=compare_seed_idx,
+                #     top_n=int(compare_top_n),
+                # )
                 #
-                content_df = pd.DataFrame(content_results)
+                #content_df = pd.DataFrame(content_results)
                 #
-                st.dataframe(
-                    content_df[['name', 'artist', 'score']],
-                    use_container_width=True,
-                    hide_index=True,
-                )
+                # st.dataframe(
+                #     content_df[['name', 'artist', 'score']],
+                #     use_container_width=True,
+                #     hide_index=True,
+                # )
                 #
                 # TEAMMATE CONTENT-BASED ALGORITHM END
                 # ============================================================
