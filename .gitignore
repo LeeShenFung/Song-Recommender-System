@@ -1,7 +1,3 @@
-# Raw datasets -- too large for GitHub (User Listening History.csv is 602MB,
-# exceeds GitHub's 100MB per-file limit) and not needed to run the app since
-# artifacts/ already contains everything pre-computed.
-# Only needed locally if you want to re-run src/preprocess.py.
 data/*
 !data/.gitkeep
 
@@ -17,3 +13,6 @@ venv/
 # OS junk
 .DS_Store
 Thumbs.db
+
+Music Info.csv
+User Listening History.csv
