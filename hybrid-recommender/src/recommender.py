@@ -49,6 +49,31 @@ def _minmax(x: np.ndarray) -> np.ndarray:
         return np.full_like(x, 0.5)
     return (x - lo) / (hi - lo)
 
+class ContentBasedRecommender:
+    def __init__(self, artifacts_path='artifacts/'):
+        print("Loading pre-trained Content-Based model and data...")
+        
+        self.nn_model = joblib.load(f"{artifacts_path}content_nn.joblib")
+        
+        self.content_matrix = sp.load_npz(f"{artifacts_path}content_matrix.npz")
+        
+        self.track_ids = np.load(f"{artifacts_path}track_id_categories.npy", allow_pickle=True)
+
+    def recommend(self, song_id, top_k=10):
+        try:
+            song_index = np.where(self.track_ids == song_id)[0][0]
+        except IndexError:
+            return {"error": f"Cannot find song ID: {song_id}"}
+
+        song_vector = self.content_matrix[song_index]
+
+        distances, indices = self.nn_model.kneighbors(song_vector, n_neighbors=top_k + 1)
+
+        recommended_indices = indices[0][1:] 
+        
+        recommended_song_ids = self.track_ids[recommended_indices]
+        
+        return recommended_song_ids.tolist()
 
 class HybridRecommender:
     def __init__(self, art_dir: str = ART_DIR):
