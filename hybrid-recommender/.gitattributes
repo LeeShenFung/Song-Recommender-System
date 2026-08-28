@@ -1,6 +1,0 @@
-# Make sure Git treats these as binary and never rewrites line endings --
-# doing so would silently corrupt the numpy/scipy/joblib files, especially
-# on a team mixing Windows and Mac/Linux.
-*.npy binary
-*.npz binary
-*.joblib binary

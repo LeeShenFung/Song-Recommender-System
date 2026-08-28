@@ -2,7 +2,7 @@ import pandas as pd
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 
-def load_and_merge_data(music_path="../data/Music Info.csv", history_path="../data/User Listening History.csv"):
+def load_and_merge_data(music_path="data/Music Info.csv", history_path="data/User Listening History.csv"):
     """
     Automated pipeline to load, merge, and extract features for ALL models.
     Ensures fair extraction time by pulling genre, artist, and playcount together.
