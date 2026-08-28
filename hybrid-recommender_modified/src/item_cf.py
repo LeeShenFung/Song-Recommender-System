@@ -119,8 +119,13 @@ class ItemBasedCF:
             )
         return results
 
-    def _top_similar_indices(self, seed_track_idx: int, top_n: int = 10):
-        """Return Top-N track indices and cosine scores for one seed track."""
+    def _top_similar_indices(self, seed_track_idx: int, top_n: int = 10,
+                             exclude_track_indices=None):
+        """Return Top-N track indices and cosine scores for one seed track.
+
+        exclude_track_indices can be used by the Streamlit developer dashboard
+        to remove tracks already heard by a selected existing user.
+        """
         seed_track_idx = int(seed_track_idx)
 
         if seed_track_idx < 0 or seed_track_idx >= self.n_items:
@@ -139,6 +144,13 @@ class ItemBasedCF:
         # Recommend only tracks that have collaborative signal in this model.
         valid = self.item_user_matrix.getnnz(axis=1) > 0
         valid[seed_track_idx] = False
+
+        if exclude_track_indices is not None:
+            for idx in exclude_track_indices:
+                idx = int(idx)
+                if 0 <= idx < self.n_items:
+                    valid[idx] = False
+
         candidate_idxs = np.flatnonzero(valid)
 
         if len(candidate_idxs) == 0:
@@ -156,7 +168,8 @@ class ItemBasedCF:
         top_idxs = top_idxs[np.argsort(-similarities[top_idxs])][:k]
         return top_idxs.astype("int32"), similarities[top_idxs].astype("float32")
 
-    def recommend_similar_tracks(self, seed_track_idx: int, top_n: int = 10):
+    def recommend_similar_tracks(self, seed_track_idx: int, top_n: int = 10,
+                                 exclude_track_indices=None):
         """
         Recommend tracks whose selected-user playcount vectors have the
         highest cosine similarity to the seed track.
@@ -164,6 +177,7 @@ class ItemBasedCF:
         top_idxs, top_scores = self._top_similar_indices(
             seed_track_idx=seed_track_idx,
             top_n=top_n,
+            exclude_track_indices=exclude_track_indices,
         )
 
         results = []

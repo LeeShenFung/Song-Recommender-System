@@ -35,6 +35,10 @@ st.set_page_config(page_title="Hybrid Music Recommender", page_icon="🎵", layo
 # --------------------------------------------------------------------------- #
 # cached resources / data
 # --------------------------------------------------------------------------- #
+# @st.cache_resource
+# def load_content_based():
+#     return ContentBasedRecommender(ART_DIR)
+
 @st.cache_resource(show_spinner="Loading recommender model & data ...")
 def load_recommender():
     return HybridRecommender(ART_DIR)
@@ -254,110 +258,310 @@ def dev_page(rec: HybridRecommender):
             logout()
             st.rerun()
 
-    st.title("🛠️ Developer Dashboard")
+    st.title("🛠️ Developer")
 
-    tab_cf, tab_content, tab_hybrid = st.tabs([
+    tab_dashboard, tab_cf, tab_content, tab_hybrid = st.tabs([
+        "📊 Developer Dashboard",
         "🤝 Collaborative Filtering",
-        "🎼 Content-Based Filtering",
+        "🎼 Content-Based",
         "🔀 Hybrid Recommender",
     ])
 
     # ------------------------------------------------------------------ #
-    # Collaborative Filtering — user's Item-Based CF
+    # Developer Dashboard — same input, three model outputs
     # ------------------------------------------------------------------ #
-    with tab_cf:
-        st.header("🤝 Item-Based Collaborative Filtering")
-        st.write(
-            "This backend compares songs using users' playcount patterns. "
-            "Cosine similarity is calculated between item-user vectors; "
-            "song metadata is used only for displaying the results."
+    with tab_dashboard:
+        st.header("🎵 Model Comparison")
+        st.caption(
+            "Use the same existing user and seed song to compare the outputs "
+            "of Content-Based, Item-Based Collaborative Filtering, and Hybrid."
         )
 
-        st.markdown(
-            "**Flow:** interactions → Item × User matrix → "
-            "cosine similarity → Top-N similar songs"
-        )
+        # The comparison deliberately uses an EXISTING demo user because
+        # collaborative/hybrid recommendation needs historical interactions.
+        # New users with no history will always for content or hybrid
+        demo = load_demo_users().copy()
+        user_options = {
+            f"{row['username']} — {row['activity_level']} ({int(row['n_interactions'])} songs)": int(row['user_idx'])
+            for _, row in demo.iterrows()
+        }
 
-        cf = load_item_cf()
-
-        c1, c2 = st.columns([3, 1])
-        with c1:
-            cf_query = st.text_input(
-                "Search a song (title or artist)",
-                placeholder="e.g. Mr. Brightside",
-                key="cf_song_search",
-            )
-        with c2:
-            cf_top_n = st.number_input(
-                "Top-N",
-                min_value=1,
-                max_value=30,
-                value=10,
-                step=1,
-                key="cf_top_n",
+        dc1, dc2 = st.columns([2, 1])
+        with dc1:
+            user_type = st.radio(
+                "User type",
+                ["Existing User", "New User"],
+                horizontal=True,
+                key="dev_compare_user_type",
             )
 
-        seed_track_idx = None
-        if cf_query:
-            hits = cf.search_tracks(cf_query, limit=12)
-            if not hits:
-                st.warning("No matching songs found.")
-            else:
-                options = {}
-                for h in hits:
-                    signal = "" if h["has_cf_signal"] else " [no CF signal in selected users]"
-                    label = f"{h['name']} — {h['artist']} ({h['year']}){signal}"
-                    options[label] = h["track_idx"]
+            if user_type == "Existing User":
+                demo = load_demo_users().copy()
 
-                choice = st.selectbox(
-                    "Select the exact song",
-                    list(options.keys()),
-                    key="cf_exact_song",
+                user_options = {
+                    f"{row['username']} — {row['activity_level']} "
+                    f"({int(row['n_interactions'])} songs)": int(row['user_idx'])
+                    for _, row in demo.iterrows()
+                }
+
+                selected_user_label = st.selectbox(
+                    "Select existing user",
+                    list(user_options.keys()),
+                    key="dev_compare_user",
                 )
-                seed_track_idx = options[choice]
+
+                compare_user_idx = user_options[selected_user_label]
+
+            else:
+                compare_user_idx = -1
+
+                st.info(
+                    "New user has no listening history. "
+                    "Collaborative Filtering cannot provide personalised recommendations."
+                )
+
+        with dc2:
+            compare_top_n = st.number_input(
+                "Recommendations per model",
+                min_value=3,
+                max_value=10,
+                value=5,
+                step=1,
+                key="dev_compare_top_n",
+            )
+
+        compare_query = st.text_input(
+            "🔍 Test a song input",
+            placeholder="e.g. Baby",
+            key="dev_compare_song_query",
+        )
+
+        compare_seed_idx = None
+        if compare_query:
+            compare_hits = rec.search_tracks(compare_query, limit=12)
+            if not compare_hits:
+                st.warning("No matching songs found in the catalogue.")
+            else:
+                compare_options = {
+                    f"{h['name']} — {h['artist']} ({h['year']})": h['track_idx']
+                    for h in compare_hits
+                }
+                compare_choice = st.selectbox(
+                    "Select the exact song",
+                    list(compare_options.keys()),
+                    key="dev_compare_exact_song",
+                )
+                compare_seed_idx = compare_options[compare_choice]
 
         if st.button(
-            "▶ Run Item-Based CF",
+            "▶ Compare Models",
             type="primary",
-            disabled=seed_track_idx is None,
-            key="run_item_cf",
+            disabled=compare_seed_idx is None,
+            key="run_model_comparison",
         ):
-            with st.spinner("Calculating cosine similarity ..."):
-                results = cf.recommend_similar_tracks(
-                    seed_track_idx=seed_track_idx,
-                    top_n=int(cf_top_n),
+            cf = load_item_cf()
+            if compare_user_idx == -1:
+                listened_set = set()
+            else:
+                listened_tracks, _ = rec.user_history(compare_user_idx)
+                listened_set = set(int(x) for x in listened_tracks.tolist())
+
+            # 本來是feng的alforithm Content-only: alpha=1.0 according to recommender.py
+            content_results = rec.recommend(
+                user_idx=compare_user_idx,
+                seed_track_idx=compare_seed_idx,
+                top_n=int(compare_top_n),
+                alpha=1.0,
+                exclude_listened=True,
+            )
+
+            # User's Item-Based CF: seed-song cosine similarity from historical
+            # playcount patterns; already-listened tracks are excluded here so
+            # the comparison behaves like a recommendation list for this user.
+            # Not for new user, they have no history and thus no collaborative signal.
+            if compare_user_idx == -1:
+                cf_results = []
+            else:
+                cf_results = cf.recommend_similar_tracks(
+                    seed_track_idx=compare_seed_idx,
+                    top_n=int(compare_top_n),
+                    exclude_track_indices=listened_set,
                 )
 
-            if not results:
-                st.warning(
-                    "This seed song has no collaborative signal among the "
-                    "selected active users. Try another song."
+            # Hybrid: fixed 50/50 blend used by the user-facing prototype.
+            hybrid_results = rec.recommend(
+                user_idx=compare_user_idx,
+                seed_track_idx=compare_seed_idx,
+                top_n=int(compare_top_n),
+                alpha=0.5,
+                exclude_listened=True,
+            )
+
+            st.subheader("Model Comparison")
+            col_content, col_cf, col_hybrid = st.columns(3)
+
+            def _comparison_df(results, source):
+                rows = []
+                for r in results:
+                    idx = int(r['track_idx'])
+                    meta = rec.music_info.iloc[idx]
+                    row = {
+                        'name': r['name'],
+                        'artist': r['artist'],
+                        'genre': meta.get('genre', ''),
+                    }
+                    if source == 'cf':
+                        row['score'] = r.get('similarity_score', 0.0)
+                    else:
+                        row['score'] = r.get('hybrid_score', 0.0)
+                    rows.append(row)
+                return pd.DataFrame(rows)
+
+            with col_content:
+                st.markdown("#### Content-Based")
+                st.info(
+                    "Content-Based Filtering implementation will be added here."
                 )
-            else:
-                df_cf = pd.DataFrame(results)
-                show_cols = [
-                    "name", "artist", "genre", "year", "similarity_score"
-                ]
-                st.subheader(f"Top {len(df_cf)} similar songs")
+
+                # ============================================================
+                # TEAMMATE CONTENT-BASED ALGORITHM START
+                #
+                # Example:
+                #
+                # content_model = load_content_based()
+
+                # content_results = content_model.recommend(
+                #     seed_track_idx=compare_seed_idx,
+                #     top_n=int(compare_top_n),
+                # )
+                #
+                #content_df = pd.DataFrame(content_results)
+                #
+                # st.dataframe(
+                #     content_df[['name', 'artist', 'score']],
+                #     use_container_width=True,
+                #     hide_index=True,
+                # )
+                #
+                # TEAMMATE CONTENT-BASED ALGORITHM END
+                # ============================================================
+
+            with col_cf:
+                st.markdown("#### Collaborative Filtering")
+
+                if compare_user_idx == -1:
+                    st.info(
+                        "Not available for new users because there is no listening history."
+                    )
+                else:
+                    cf_df = _comparison_df(cf_results, 'cf')
+
+                    if cf_df.empty:
+                        st.warning(
+                            "No CF signal for this seed song among the selected active users."
+                        )
+                    else:
+                        st.dataframe(
+                            cf_df[['name', 'artist', 'score']]
+                            .style.format({'score': '{:.3f}'}),
+                            use_container_width=True,
+                            hide_index=True,
+                        )
+
+            with col_hybrid:
+                st.markdown("#### Hybrid Model")
+                hybrid_df = _comparison_df(hybrid_results, 'hybrid')
                 st.dataframe(
-                    df_cf[show_cols].style.format(
-                        {"similarity_score": "{:.4f}"}
-                    ),
+                    hybrid_df.style.format({'score': '{:.3f}'}),
                     use_container_width=True,
                     hide_index=True,
                 )
 
-        st.divider()
-        st.subheader("📊 Collaborative Filtering Evaluation")
+            st.caption(
+                "CF score = cosine similarity from user playcount patterns. "
+                "Artist/genre are shown as metadata and are not used to calculate the CF similarity."
+            )
+    with tab_cf:
+        st.header("🤝 Item-Based Collaborative Filtering")
 
-        st.markdown(
-            "**Common protocol (same as Feng's latest evaluation):** "
-            "the user's most-played song is hidden as ground truth, the "
-            "second most-played song is used as the seed, and Top-K "
-            "recommendations are checked for a hit."
+        st.write(
+            "This model recommends songs based on users' playcount patterns "
+            "using item-based collaborative filtering and cosine similarity."
         )
 
+        cf = load_item_cf()
+
+        cf_query = st.text_input(
+            "Search a song",
+            placeholder="e.g. Baby",
+            key="cf_tab_song_search",
+        )
+
+        cf_top_n = st.number_input(
+            "Number of recommendations",
+            min_value=1,
+            max_value=30,
+            value=10,
+            step=1,
+            key="cf_tab_top_n",
+        )
+
+        cf_seed_idx = None
+
+        if cf_query:
+            hits = cf.search_tracks(cf_query, limit=12)
+
+            if not hits:
+                st.warning("No matching songs found.")
+            else:
+                options = {
+                    f"{h['name']} — {h['artist']} ({h['year']})":
+                    h["track_idx"]
+                    for h in hits
+                }
+
+                selected = st.selectbox(
+                    "Select the exact song",
+                    list(options.keys()),
+                    key="cf_tab_exact_song",
+                )
+                cf_seed_idx = options[selected]
+
+            if st.button(
+                "▶ Run Collaborative Filtering",
+                type="primary",
+                disabled=cf_seed_idx is None,
+                key="cf_tab_run",
+            ):
+
+                results = cf.recommend_similar_tracks(
+                    seed_track_idx=cf_seed_idx,
+                    top_n=int(cf_top_n),
+                )
+
+                if not results:
+                    st.warning("No collaborative signal found for this song.")
+
+                else:
+                    cf_df = pd.DataFrame(results)
+
+                    st.dataframe(
+                        cf_df[
+                            ["name", "artist", "similarity_score"]
+                        ].rename(
+                            columns={"similarity_score": "score"}
+                        ).style.format(
+                            {"score": "{:.4f}"}
+                        ),
+                        use_container_width=True,
+                        hide_index=True,
+                    )
+
+        st.divider()
+        st.subheader("📊 Evaluation")
+
         ev1, ev2 = st.columns(2)
+
         cf_eval_k = ev1.slider(
             "K (Top-K)",
             min_value=5,
@@ -365,6 +569,7 @@ def dev_page(rec: HybridRecommender):
             value=10,
             key="cf_eval_k",
         )
+
         cf_eval_users = ev2.slider(
             "Number of evaluation users",
             min_value=100,
@@ -375,8 +580,9 @@ def dev_page(rec: HybridRecommender):
         )
 
         st.caption(
-            "Evaluation pool: artifacts/eval_users.npy · "
-            "Sampling seed: 0 · Metric type: implicit-feedback ranking"
+            "Protocol: leave-one-out implicit feedback. "
+            "Most-played song = ground truth; "
+            "second most-played song = seed song."
         )
 
         if st.button(
@@ -384,29 +590,35 @@ def dev_page(rec: HybridRecommender):
             type="primary",
             key="run_cf_evaluation",
         ):
+
             import time
 
             with st.spinner(
-                f"Evaluating Item-Based CF on {cf_eval_users} users ..."
+                f"Evaluating Collaborative Filtering on "
+                f"{cf_eval_users} users..."
             ):
-                t0 = time.time()
+                start_time = time.time()
+
                 metrics = cf.evaluate(
                     history_source=rec,
                     k=int(cf_eval_k),
                     n_users=int(cf_eval_users),
                     seed=0,
                 )
-                elapsed = time.time() - t0
+                elapsed = time.time() - start_time
 
             m1, m2, m3 = st.columns(3)
+
             m1.metric(
                 f"Precision@{cf_eval_k}",
                 f"{metrics['precision_at_k']:.4f}",
             )
+
             m2.metric(
                 f"Recall@{cf_eval_k}",
                 f"{metrics['recall_at_k']:.4f}",
             )
+
             m3.metric(
                 f"F1@{cf_eval_k}",
                 f"{metrics['f1_at_k']:.4f}",
@@ -414,36 +626,65 @@ def dev_page(rec: HybridRecommender):
 
             st.write(
                 f"**Hits:** {metrics['hits']} / "
-                f"{metrics['n_evaluated_users']} users  ·  "
-                f"**Time:** {elapsed:.2f}s"
+                f"{metrics['n_evaluated_users']} users "
+                f"· **Time:** {elapsed:.2f}s"
             )
 
-            if metrics["no_seed_signal"] > 0:
-                st.caption(
-                    f"{metrics['no_seed_signal']} evaluated seed songs had "
-                    "no collaborative signal among the selected top 1,000 "
-                    "active users; these cases count as misses."
-                )
+        st.divider()
+        st.subheader("Model / data summary")
+        s1, s2, s3, s4 = st.columns(4)
 
-        st.caption(
-            "The Item-Based CF model uses the top 1,000 most active users "
-            "from the preprocessed catalogue interactions. The evaluation "
-            "users, holdout rule, seed-song rule, K and sampling rule follow "
-            "the same latest protocol used by the Hybrid evaluation."
+        s1.metric(
+            "Tracks in catalogue",
+            f"{cf.n_items:,}"
         )
 
-    # ------------------------------------------------------------------ #
-    # Content-Based — teammate's section
-    # ------------------------------------------------------------------ #
+        s2.metric(
+            "Active users used",
+            f"{len(cf.top_users):,}"
+        )
+
+        s3.metric(
+            "Similarity measure",
+            "Cosine"
+        )
+
+        s4.metric(
+            "Feedback type",
+            "Playcount"
+        )
+
     with tab_content:
         st.header("🎼 Content-Based Filtering")
+
         st.info(
-            "Place the Content-Based Filtering backend and its evaluation "
-            "here when the teammate's final implementation is ready."
+            "This section is reserved for the Content-Based Filtering "
+            "implementation and evaluation."
         )
+        # ============================================================
+        # TEAMMATE CONTENT-BASED ALGORITHM
+        # ============================================================
+
+        # Put teammate's recommendation demo here.
+
+
+        st.divider()
+        st.subheader("📊 Evaluation")
+
+        # Put teammate's evaluation here.
+
+
+        st.divider()
+        st.subheader("Model / data summary")
+
+        # Put teammate's model/data summary here.
+
+        # ============================================================
+        # END CONTENT-BASED SECTION
+        # ============================================================
 
     # ------------------------------------------------------------------ #
-    # Hybrid — Feng's existing developer evaluation
+    # Hybrid — KEEP the existing Hybrid evaluation tab unchanged
     # ------------------------------------------------------------------ #
     with tab_hybrid:
         st.header("🔀 Hybrid Recommender Evaluation")
