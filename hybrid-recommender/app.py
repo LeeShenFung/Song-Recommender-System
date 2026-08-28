@@ -13,6 +13,7 @@ Flow implemented (as required by the assignment brief):
 
 Run with:  streamlit run app.py
 """
+
 import hashlib
 import os
 import sys
@@ -23,6 +24,7 @@ import streamlit as st
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "src"))
 from recommender import HybridRecommender  # noqa: E402
+from item_cf import ItemBasedCF  # noqa: E402
 from evaluate import run_comparison, run_comparison_cold_start  # noqa: E402
 
 ART_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "artifacts")
@@ -38,6 +40,11 @@ def load_recommender():
     return HybridRecommender(ART_DIR)
 
 
+@st.cache_resource(show_spinner="Loading item-based collaborative filtering ...")
+def load_item_cf():
+    return ItemBasedCF(ART_DIR, max_users=1000)
+
+
 @st.cache_data
 def load_demo_users():
     return pd.read_csv(os.path.join(ART_DIR, "demo_users.csv"))
@@ -46,6 +53,7 @@ def load_demo_users():
 @st.cache_data
 def load_dev_credentials():
     import joblib
+
     return joblib.load(os.path.join(ART_DIR, "dev_credentials.joblib"))
 
 
@@ -101,8 +109,12 @@ def login_screen():
             "this is a demo account that only lives for this session."
         )
         with st.form("new_user_form"):
-            new_username = st.text_input("Pick a display name", placeholder="e.g. guest_alex")
-            new_submitted = st.form_submit_button("Continue as a new user", type="primary")
+            new_username = st.text_input(
+                "Pick a display name", placeholder="e.g. guest_alex"
+            )
+            new_submitted = st.form_submit_button(
+                "Continue as a new user", type="primary"
+            )
         if new_submitted:
             if not new_username.strip():
                 st.error("Please enter a display name.")
@@ -113,15 +125,19 @@ def login_screen():
                 st.rerun()
 
     with tab_dev:
-        st.write("Developer access is used to **test and evaluate** the "
-                 "recommender's efficiency and accuracy (Precision / Recall / F1).")
+        st.write(
+            "Developer access is used to **test and evaluate** the "
+            "recommender's efficiency and accuracy (Precision / Recall / F1)."
+        )
         with st.form("dev_login_form"):
             dev_user = st.text_input("Developer username")
             dev_pass = st.text_input("Developer password", type="password")
             dev_submit = st.form_submit_button("Log in as developer", type="primary")
         if dev_submit:
             creds = load_dev_credentials()
-            if dev_user.strip() in creds and creds[dev_user.strip()] == sha256(dev_pass):
+            if dev_user.strip() in creds and creds[dev_user.strip()] == sha256(
+                dev_pass
+            ):
                 st.session_state["role"] = "dev"
                 st.session_state["username"] = dev_user.strip()
                 st.rerun()
@@ -175,33 +191,56 @@ def user_page(rec: HybridRecommender):
         if not hits:
             st.warning("No matching songs found in the catalogue. Try another title.")
         else:
-            options = {f"{h['name']} — {h['artist']} ({h['year']})": h["track_idx"] for h in hits}
+            options = {
+                f"{h['name']} — {h['artist']} ({h['year']})": h["track_idx"]
+                for h in hits
+            }
             choice = st.selectbox("Select the exact song", list(options.keys()))
             seed_track_idx = options[choice]
 
-    top_n = st.number_input("How many recommendations do you want?", min_value=1, max_value=30, value=10, step=1)
+    top_n = st.number_input(
+        "How many recommendations do you want?",
+        min_value=1,
+        max_value=30,
+        value=10,
+        step=1,
+    )
 
     if st.button("🎯 Recommend", type="primary", disabled=seed_track_idx is None):
         results = rec.recommend(
-            user_idx=user_idx, seed_track_idx=seed_track_idx, top_n=int(top_n),
-            alpha=alpha, exclude_listened=exclude_listened,
+            user_idx=user_idx,
+            seed_track_idx=seed_track_idx,
+            top_n=int(top_n),
+            alpha=alpha,
+            exclude_listened=exclude_listened,
         )
         if not results:
-            st.info("No recommendations found (try unchecking 'exclude already played').")
+            st.info(
+                "No recommendations found (try unchecking 'exclude already played')."
+            )
         else:
             st.subheader(f"Top {len(results)} recommendations for you")
             for i, r in enumerate(results, 1):
                 with st.container(border=True):
                     c1, c2 = st.columns([4, 1])
                     with c1:
-                        st.markdown(f"**{i}. {r['name']}** — {r['artist']} ({r['year']})")
+                        st.markdown(
+                            f"**{i}. {r['name']}** — {r['artist']} ({r['year']})"
+                        )
                         if isinstance(r["tags"], str) and r["tags"]:
                             st.caption(r["tags"])
-                        st.progress(r["hybrid_score"], text=f"hybrid score {r['hybrid_score']:.2f}")
-                        st.caption(f"content similarity {r['content_score']:.2f}  ·  "
-                                   f"collaborative similarity {r['cf_score']:.2f}")
+                        st.progress(
+                            r["hybrid_score"],
+                            text=f"hybrid score {r['hybrid_score']:.2f}",
+                        )
+                        st.caption(
+                            f"content similarity {r['content_score']:.2f}  ·  "
+                            f"collaborative similarity {r['cf_score']:.2f}"
+                        )
                     with c2:
-                        if isinstance(r["preview_url"], str) and r["preview_url"].startswith("http"):
+                        if isinstance(r["preview_url"], str) and r[
+                            "preview_url"
+                        ].startswith("http"):
                             st.audio(r["preview_url"])
 
 
@@ -215,99 +254,318 @@ def dev_page(rec: HybridRecommender):
             logout()
             st.rerun()
 
-    st.title("🛠️ Recommender evaluation")
-    st.markdown(
-        "**Protocol (leave-one-out, implicit feedback):** for each evaluated user, "
-        "their most-played song is hidden as ground truth, their second most-played "
-        "song is used as the seed input, and the rest of their history feeds the "
-        "collaborative profile. A hit is counted if the hidden song appears in the "
-        "Top-K recommendation list."
-    )
+    st.title("🛠️ Developer Dashboard")
 
-    col1, col2, col3 = st.columns(3)
-    k = col1.slider("K (top-K recommendations)", 5, 30, 10)
-    n_users = col2.slider("Number of evaluation users (sampled)", 100, 3000, 500, 100)
-    alphas_str = col3.text_input("Alpha values to compare (comma-separated)", "0.0, 0.25, 0.5, 0.75, 1.0")
+    tab_cf, tab_content, tab_hybrid = st.tabs([
+        "🤝 Collaborative Filtering",
+        "🎼 Content-Based Filtering",
+        "🔀 Hybrid Recommender",
+    ])
 
-    if st.button("▶ Run evaluation", type="primary"):
-        try:
-            alphas = tuple(float(a.strip()) for a in alphas_str.split(","))
-        except ValueError:
-            st.error("Could not parse alpha values.")
-            return
-        with st.spinner(f"Evaluating on {n_users} held-out users for each alpha ..."):
-            rows = run_comparison(rec, k=k, n_users=n_users, alphas=alphas)
-        df = pd.DataFrame(rows)
-        df["config"] = df["alpha"].apply(
-            lambda a: "Collaborative-only" if a == 0 else
-                      ("Content-only" if a == 1 else f"Hybrid (α={a})")
+    # ------------------------------------------------------------------ #
+    # Collaborative Filtering — user's Item-Based CF
+    # ------------------------------------------------------------------ #
+    with tab_cf:
+        st.header("🤝 Item-Based Collaborative Filtering")
+        st.write(
+            "This backend compares songs using users' playcount patterns. "
+            "Cosine similarity is calculated between item-user vectors; "
+            "song metadata is used only for displaying the results."
         )
-        st.subheader("Results")
-        st.dataframe(
-            df[["config", "alpha", "k", "n_evaluated_users", "precision_at_k", "recall_at_k", "f1_at_k", "seconds"]],
-            use_container_width=True,
-        )
-        chart_df = df.set_index("config")[["precision_at_k", "recall_at_k", "f1_at_k"]]
-        st.bar_chart(chart_df)
-        best = df.loc[df["f1_at_k"].idxmax()]
-        st.success(f"Best F1@{k}: **{best['f1_at_k']:.4f}** at alpha = {best['alpha']} ({best['config']})")
 
-    st.divider()
-    st.subheader("🆕 Cold-start (new user) evaluation")
-    st.markdown(
-        "This measures what a **brand-new user with zero listening history** "
-        "would actually experience across different `alpha` (hybrid weight) "
-        "settings. Because a new user's collaborative fold-in vector is "
-        "all-zero, their collaborative score is a **flat constant across "
-        "every track** — adding the same constant to every item can never "
-        "change the ranking. So mathematically:\n\n"
-        "- any **alpha > 0** collapses to the exact same ranking as "
-        "**content-only (alpha=1)**\n"
-        "- **alpha = 0** (pure collaborative) has *zero* signal at all — "
-        "every track ties, so it can't do better than an arbitrary ordering\n\n"
-        "Run the comparison below to see this borne out in the actual "
-        "numbers — it's the clearest illustration of the cold-start problem, "
-        "and of why the hybrid design's content fallback matters."
-    )
-    cs_col1, cs_col2, cs_col3 = st.columns(3)
-    cs_k = cs_col1.slider("K (top-K)", 5, 30, 10, key="cs_k")
-    cs_n = cs_col2.slider("Number of evaluation users (sampled)", 100, 3000, 500, 100, key="cs_n")
-    cs_alphas_str = cs_col3.text_input(
-        "Alpha values to compare", "0.0, 0.25, 0.5, 0.75, 1.0", key="cs_alphas"
-    )
-    if st.button("▶ Run cold-start evaluation"):
-        try:
-            cs_alphas = tuple(float(a.strip()) for a in cs_alphas_str.split(","))
-        except ValueError:
-            st.error("Could not parse alpha values.")
-        else:
-            with st.spinner(f"Simulating new-user recommendations for {cs_n} users ..."):
-                cs_rows = run_comparison_cold_start(rec, k=cs_k, n_users=cs_n, alphas=cs_alphas)
-            cs_df = pd.DataFrame(cs_rows)
-            cs_df["config"] = cs_df["alpha"].apply(
+        st.markdown(
+            "**Flow:** interactions → Item × User matrix → "
+            "cosine similarity → Top-N similar songs"
+        )
+
+        cf = load_item_cf()
+
+        c1, c2 = st.columns([3, 1])
+        with c1:
+            cf_query = st.text_input(
+                "Search a song (title or artist)",
+                placeholder="e.g. Mr. Brightside",
+                key="cf_song_search",
+            )
+        with c2:
+            cf_top_n = st.number_input(
+                "Top-N",
+                min_value=1,
+                max_value=30,
+                value=10,
+                step=1,
+                key="cf_top_n",
+            )
+
+        seed_track_idx = None
+        if cf_query:
+            hits = cf.search_tracks(cf_query, limit=12)
+            if not hits:
+                st.warning("No matching songs found.")
+            else:
+                options = {}
+                for h in hits:
+                    signal = "" if h["has_cf_signal"] else " [no CF signal in selected users]"
+                    label = f"{h['name']} — {h['artist']} ({h['year']}){signal}"
+                    options[label] = h["track_idx"]
+
+                choice = st.selectbox(
+                    "Select the exact song",
+                    list(options.keys()),
+                    key="cf_exact_song",
+                )
+                seed_track_idx = options[choice]
+
+        if st.button(
+            "▶ Run Item-Based CF",
+            type="primary",
+            disabled=seed_track_idx is None,
+            key="run_item_cf",
+        ):
+            with st.spinner("Calculating cosine similarity ..."):
+                results = cf.recommend_similar_tracks(
+                    seed_track_idx=seed_track_idx,
+                    top_n=int(cf_top_n),
+                )
+
+            if not results:
+                st.warning(
+                    "This seed song has no collaborative signal among the "
+                    "selected active users. Try another song."
+                )
+            else:
+                df_cf = pd.DataFrame(results)
+                show_cols = [
+                    "name", "artist", "genre", "year", "similarity_score"
+                ]
+                st.subheader(f"Top {len(df_cf)} similar songs")
+                st.dataframe(
+                    df_cf[show_cols].style.format(
+                        {"similarity_score": "{:.4f}"}
+                    ),
+                    use_container_width=True,
+                    hide_index=True,
+                )
+
+        st.divider()
+        st.subheader("📊 Collaborative Filtering Evaluation")
+
+        st.markdown(
+            "**Common protocol (same as Feng's latest evaluation):** "
+            "the user's most-played song is hidden as ground truth, the "
+            "second most-played song is used as the seed, and Top-K "
+            "recommendations are checked for a hit."
+        )
+
+        ev1, ev2 = st.columns(2)
+        cf_eval_k = ev1.slider(
+            "K (Top-K)",
+            min_value=5,
+            max_value=30,
+            value=10,
+            key="cf_eval_k",
+        )
+        cf_eval_users = ev2.slider(
+            "Number of evaluation users",
+            min_value=100,
+            max_value=3000,
+            value=500,
+            step=100,
+            key="cf_eval_users",
+        )
+
+        st.caption(
+            "Evaluation pool: artifacts/eval_users.npy · "
+            "Sampling seed: 0 · Metric type: implicit-feedback ranking"
+        )
+
+        if st.button(
+            "▶ Run CF Evaluation",
+            type="primary",
+            key="run_cf_evaluation",
+        ):
+            import time
+
+            with st.spinner(
+                f"Evaluating Item-Based CF on {cf_eval_users} users ..."
+            ):
+                t0 = time.time()
+                metrics = cf.evaluate(
+                    history_source=rec,
+                    k=int(cf_eval_k),
+                    n_users=int(cf_eval_users),
+                    seed=0,
+                )
+                elapsed = time.time() - t0
+
+            m1, m2, m3 = st.columns(3)
+            m1.metric(
+                f"Precision@{cf_eval_k}",
+                f"{metrics['precision_at_k']:.4f}",
+            )
+            m2.metric(
+                f"Recall@{cf_eval_k}",
+                f"{metrics['recall_at_k']:.4f}",
+            )
+            m3.metric(
+                f"F1@{cf_eval_k}",
+                f"{metrics['f1_at_k']:.4f}",
+            )
+
+            st.write(
+                f"**Hits:** {metrics['hits']} / "
+                f"{metrics['n_evaluated_users']} users  ·  "
+                f"**Time:** {elapsed:.2f}s"
+            )
+
+            if metrics["no_seed_signal"] > 0:
+                st.caption(
+                    f"{metrics['no_seed_signal']} evaluated seed songs had "
+                    "no collaborative signal among the selected top 1,000 "
+                    "active users; these cases count as misses."
+                )
+
+        st.caption(
+            "The Item-Based CF model uses the top 1,000 most active users "
+            "from the preprocessed catalogue interactions. The evaluation "
+            "users, holdout rule, seed-song rule, K and sampling rule follow "
+            "the same latest protocol used by the Hybrid evaluation."
+        )
+
+    # ------------------------------------------------------------------ #
+    # Content-Based — teammate's section
+    # ------------------------------------------------------------------ #
+    with tab_content:
+        st.header("🎼 Content-Based Filtering")
+        st.info(
+            "Place the Content-Based Filtering backend and its evaluation "
+            "here when the teammate's final implementation is ready."
+        )
+
+    # ------------------------------------------------------------------ #
+    # Hybrid — Feng's existing developer evaluation
+    # ------------------------------------------------------------------ #
+    with tab_hybrid:
+        st.header("🔀 Hybrid Recommender Evaluation")
+
+        st.markdown(
+            "**Protocol (leave-one-out, implicit feedback):** for each evaluated user, "
+            "their most-played song is hidden as ground truth, their second most-played "
+            "song is used as the seed input, and the rest of their history feeds the "
+            "collaborative profile. A hit is counted if the hidden song appears in the "
+            "Top-K recommendation list."
+        )
+
+        col1, col2, col3 = st.columns(3)
+        k = col1.slider("K (top-K recommendations)", 5, 30, 10)
+        n_users = col2.slider("Number of evaluation users (sampled)", 100, 3000, 500, 100)
+        alphas_str = col3.text_input(
+            "Alpha values to compare (comma-separated)",
+            "0.0, 0.25, 0.5, 0.75, 1.0",
+        )
+
+        if st.button("▶ Run evaluation", type="primary"):
+            try:
+                alphas = tuple(float(a.strip()) for a in alphas_str.split(","))
+            except ValueError:
+                st.error("Could not parse alpha values.")
+                return
+
+            with st.spinner(f"Evaluating on {n_users} held-out users for each alpha ..."):
+                rows = run_comparison(rec, k=k, n_users=n_users, alphas=alphas)
+
+            df = pd.DataFrame(rows)
+            df["config"] = df["alpha"].apply(
                 lambda a: "Collaborative-only" if a == 0 else
                           ("Content-only" if a == 1 else f"Hybrid (α={a})")
             )
+
+            st.subheader("Results")
             st.dataframe(
-                cs_df[["config", "alpha", "k", "n_evaluated_users", "precision_at_k", "recall_at_k", "f1_at_k", "seconds"]],
+                df[[
+                    "config", "alpha", "k", "n_evaluated_users",
+                    "precision_at_k", "recall_at_k", "f1_at_k", "seconds"
+                ]],
                 use_container_width=True,
             )
-            cs_chart_df = cs_df.set_index("config")[["precision_at_k", "recall_at_k", "f1_at_k"]]
-            st.bar_chart(cs_chart_df)
-            st.info(
-                "Notice every alpha > 0 gives identical numbers — that's the "
-                "content-only ranking. Only alpha = 0 differs, and it's "
-                "strictly worse: pure collaborative filtering has no way to "
-                "handle a user it has never seen before."
+
+            chart_df = df.set_index("config")[[
+                "precision_at_k", "recall_at_k", "f1_at_k"
+            ]]
+            st.bar_chart(chart_df)
+
+            best = df.loc[df["f1_at_k"].idxmax()]
+            st.success(
+                f"Best F1@{k}: **{best['f1_at_k']:.4f}** "
+                f"at alpha = {best['alpha']} ({best['config']})"
             )
 
-    st.divider()
-    st.subheader("Model / data summary")
-    m1, m2, m3, m4 = st.columns(4)
-    m1.metric("Tracks in catalogue", f"{rec.n_items:,}")
-    m2.metric("Registered users (with history)", f"{rec.n_users:,}")
-    m3.metric("Total interactions", f"{len(rec.inter_user):,}")
-    m4.metric("CF latent dimensions", rec.item_factors.shape[1])
+        st.divider()
+        st.subheader("🆕 Cold-start (new user) evaluation")
+        st.markdown(
+            "This measures what a **brand-new user with zero listening history** "
+            "would experience across different `alpha` (hybrid weight) settings. "
+            "Because a new user's collaborative fold-in vector is all-zero, their "
+            "collaborative score is a flat constant across every track."
+        )
+
+        cs_col1, cs_col2, cs_col3 = st.columns(3)
+        cs_k = cs_col1.slider("K (top-K)", 5, 30, 10, key="cs_k")
+        cs_n = cs_col2.slider(
+            "Number of evaluation users (sampled)",
+            100, 3000, 500, 100,
+            key="cs_n",
+        )
+        cs_alphas_str = cs_col3.text_input(
+            "Alpha values to compare",
+            "0.0, 0.25, 0.5, 0.75, 1.0",
+            key="cs_alphas",
+        )
+
+        if st.button("▶ Run cold-start evaluation"):
+            try:
+                cs_alphas = tuple(
+                    float(a.strip()) for a in cs_alphas_str.split(",")
+                )
+            except ValueError:
+                st.error("Could not parse alpha values.")
+            else:
+                with st.spinner(
+                    f"Simulating new-user recommendations for {cs_n} users ..."
+                ):
+                    cs_rows = run_comparison_cold_start(
+                        rec,
+                        k=cs_k,
+                        n_users=cs_n,
+                        alphas=cs_alphas,
+                    )
+
+                cs_df = pd.DataFrame(cs_rows)
+                cs_df["config"] = cs_df["alpha"].apply(
+                    lambda a: "Collaborative-only" if a == 0 else
+                              ("Content-only" if a == 1 else f"Hybrid (α={a})")
+                )
+
+                st.dataframe(
+                    cs_df[[
+                        "config", "alpha", "k", "n_evaluated_users",
+                        "precision_at_k", "recall_at_k", "f1_at_k", "seconds"
+                    ]],
+                    use_container_width=True,
+                )
+
+                cs_chart_df = cs_df.set_index("config")[[
+                    "precision_at_k", "recall_at_k", "f1_at_k"
+                ]]
+                st.bar_chart(cs_chart_df)
+
+        st.divider()
+        st.subheader("Model / data summary")
+        m1, m2, m3, m4 = st.columns(4)
+        m1.metric("Tracks in catalogue", f"{rec.n_items:,}")
+        m2.metric("Registered users (with history)", f"{rec.n_users:,}")
+        m3.metric("Total interactions", f"{len(rec.inter_user):,}")
+        m4.metric("CF latent dimensions", rec.item_factors.shape[1])
 
 
 # --------------------------------------------------------------------------- #
