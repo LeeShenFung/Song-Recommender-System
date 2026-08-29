@@ -11,14 +11,12 @@ Flow implemented (as required by the assignment brief):
   DEVELOPER LOGIN  -> run offline evaluation (Precision@K, Recall@K, F1@K)
                        to assess the recommender's efficiency and accuracy.
 
-Run with:  streamlit run app.py
+Run with paste the line in the terminal:  python -m streamlit run hybrid-recommender_modified/app.py
 """
 
 import hashlib
 import os
 import sys
-
-import numpy as np
 import pandas as pd
 import streamlit as st
 
@@ -246,7 +244,7 @@ def user_page(rec: HybridRecommender):
 # --------------------------------------------------------------------------- #
 def dev_page(rec: HybridRecommender):
     with st.sidebar:
-        st.markdown(f"### 🛠️ {st.session_state['username']} (developer)")
+        st.markdown(f"### 🛠️ {st.session_state['username']} (Developer)")
         if st.button("Log out"):
             logout()
             st.rerun()
