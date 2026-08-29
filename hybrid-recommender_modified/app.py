@@ -802,21 +802,12 @@ def dev_page(rec: HybridRecommender):
             "Top-K recommendation list."
         )
 
-        col1, col2, col3 = st.columns(3)
+        col1, col2 = st.columns(2)
         k = col1.slider("K (top-K recommendations)", 5, 30, 10)
         n_users = col2.slider("Number of evaluation users (sampled)", 100, 3000, 500, 100)
-        alphas_str = col3.text_input(
-            "Alpha values to compare (comma-separated)",
-            "0.0, 0.25, 0.5, 0.75, 1.0",
-        )
+        alphas = (0.5,)
 
         if st.button("▶ Run evaluation", type="primary"):
-            try:
-                alphas = tuple(float(a.strip()) for a in alphas_str.split(","))
-            except ValueError:
-                st.error("Could not parse alpha values.")
-                return
-
             with st.spinner(f"Evaluating on {n_users} held-out users for each alpha ..."):
                 rows = run_comparison(rec, k=k, n_users=n_users, alphas=alphas)
 
@@ -825,6 +816,7 @@ def dev_page(rec: HybridRecommender):
                 lambda a: "Collaborative-only" if a == 0 else
                           ("Content-only" if a == 1 else f"Hybrid (α={a})")
             )
+            df = df[df["alpha"] == 0.5]
 
             st.subheader("Results")
             st.dataframe(
@@ -855,55 +847,45 @@ def dev_page(rec: HybridRecommender):
             "collaborative score is a flat constant across every track."
         )
 
-        cs_col1, cs_col2, cs_col3 = st.columns(3)
+        cs_col1, cs_col2 = st.columns(2)
         cs_k = cs_col1.slider("K (top-K)", 5, 30, 10, key="cs_k")
         cs_n = cs_col2.slider(
             "Number of evaluation users (sampled)",
             100, 3000, 500, 100,
             key="cs_n",
         )
-        cs_alphas_str = cs_col3.text_input(
-            "Alpha values to compare",
-            "0.0, 0.25, 0.5, 0.75, 1.0",
-            key="cs_alphas",
-        )
+        cs_alphas = (0.5,)
 
         if st.button("▶ Run cold-start evaluation"):
-            try:
-                cs_alphas = tuple(
-                    float(a.strip()) for a in cs_alphas_str.split(",")
-                )
-            except ValueError:
-                st.error("Could not parse alpha values.")
-            else:
-                with st.spinner(
-                    f"Simulating new-user recommendations for {cs_n} users ..."
-                ):
-                    cs_rows = run_comparison_cold_start(
-                        rec,
-                        k=cs_k,
-                        n_users=cs_n,
-                        alphas=cs_alphas,
-                    )
-
-                cs_df = pd.DataFrame(cs_rows)
-                cs_df["config"] = cs_df["alpha"].apply(
-                    lambda a: "Collaborative-only" if a == 0 else
-                              ("Content-only" if a == 1 else f"Hybrid (α={a})")
+            with st.spinner(
+                f"Simulating new-user recommendations for {cs_n} users ..."
+            ):
+                cs_rows = run_comparison_cold_start(
+                    rec,
+                    k=cs_k,
+                    n_users=cs_n,
+                    alphas=cs_alphas,
                 )
 
-                st.dataframe(
-                    cs_df[[
-                        "config", "alpha", "k", "n_evaluated_users",
-                        "precision_at_k", "recall_at_k", "f1_at_k", "seconds"
-                    ]],
-                    use_container_width=True,
-                )
+            cs_df = pd.DataFrame(cs_rows)
+            cs_df["config"] = cs_df["alpha"].apply(
+                lambda a: "Collaborative-only" if a == 0 else
+                          ("Content-only" if a == 1 else f"Hybrid (α={a})")
+            )
+            cs_df = cs_df[cs_df["alpha"] == 0.5]
 
-                cs_chart_df = cs_df.set_index("config")[[
-                    "precision_at_k", "recall_at_k", "f1_at_k"
-                ]]
-                st.bar_chart(cs_chart_df)
+            st.dataframe(
+                cs_df[[
+                    "config", "alpha", "k", "n_evaluated_users",
+                    "precision_at_k", "recall_at_k", "f1_at_k", "seconds"
+                ]],
+                use_container_width=True,
+            )
+
+            cs_chart_df = cs_df.set_index("config")[[
+                "precision_at_k", "recall_at_k", "f1_at_k"
+            ]]
+            st.bar_chart(cs_chart_df)
 
         st.divider()
         st.subheader("Model / data summary")
