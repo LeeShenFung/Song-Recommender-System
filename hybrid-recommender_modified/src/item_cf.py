@@ -1,10 +1,7 @@
 """
-item_cf.py
-==========
 Item-Based Collaborative Filtering for the developer dashboard.
 
-This implementation reuses the preprocessed artifacts created by Feng's
-pipeline instead of loading the original ~9.7M-row listening-history CSV.
+-reuses the preprocessed artifacts(datasets).
 
 Algorithm:
     interactions.npz
@@ -15,13 +12,13 @@ Algorithm:
 
 Important:
 - Similarity is based on user playcount behaviour, NOT song metadata.
-- music_info.csv is only used to display song information.
-- The full 50k x 50k item-item similarity matrix is NOT precomputed.
+- music_info.csv is ONLY used to display song information.
+- The full item-item similarity matrix is NOT precomputed.
   Similarity is calculated on demand for the selected seed song.
+
 """
 
 import os
-
 import numpy as np
 import pandas as pd
 import scipy.sparse as sp
@@ -199,20 +196,10 @@ class ItemBasedCF:
     def evaluate(self, history_source, k: int = 10,
                  n_users: int | None = 500, seed: int = 0):
         """
-        Evaluate Item-Based CF using the SAME latest leave-one-out protocol
-        used by Feng's evaluate.py.
-
         For each evaluation user:
           1. Most-played track  -> hidden ground truth
           2. Second most-played -> seed song
           3. Remaining history  -> available profile
-
-        Item-Based CF itself only needs the seed song, so the remaining
-        profile is not used for scoring. This is an algorithmic difference,
-        not a change to the common evaluation protocol.
-
-        The same artifacts/eval_users.npy pool is used. Sampling uses
-        np.random.default_rng(seed), matching Feng's evaluate.py.
         """
         eval_users = np.load(os.path.join(self.art_dir, "eval_users.npy"))
 
@@ -231,7 +218,6 @@ class ItemBasedCF:
         for u in eval_users:
             tracks, counts = history_source.user_history(int(u))
 
-            # Feng's build_holdout() requires at least 3 distinct tracks.
             if len(tracks) < 3:
                 continue
 
