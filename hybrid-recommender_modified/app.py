@@ -179,13 +179,9 @@ def user_page(rec: HybridRecommender):
     st.title("🎵 Get song recommendations")
     if is_new_user:
         st.info(
-            "Since you're a brand-new user with no listening history, the "
-            "collaborative-filtering part of the model has nothing to learn from "
-            "yet (its score is a flat constant for every song). Recommendations "
-            "below are effectively driven by **content similarity** to your seed "
-            "song only — this is the classic *cold-start problem* in "
-            "recommender systems. Log in as an existing demo user instead to see "
-            "the full hybrid effect."
+            "👋 Welcome! Since you're a brand-new user, let's find some songs "
+            "you'll love. Search for a song you enjoy below and we'll build "
+            "your first set of recommendations from it."
         )
     st.write("Step 1 — type a song. Step 2 — choose how many recommendations you want.")
 
@@ -237,10 +233,6 @@ def user_page(rec: HybridRecommender):
                         st.progress(
                             r["hybrid_score"],
                             text=f"hybrid score {r['hybrid_score']:.2f}",
-                        )
-                        st.caption(
-                            f"content similarity {r['content_score']:.2f}  ·  "
-                            f"collaborative similarity {r['cf_score']:.2f}"
                         )
                     with c2:
                         if isinstance(r["preview_url"], str) and r[

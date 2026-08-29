@@ -106,19 +106,45 @@ class HybridRecommender:
         return self._sorted_track[s:e], self._sorted_count[s:e]
 
     def search_tracks(self, query: str, limit: int = 12):
-        """Case-insensitive substring search over song name / artist,
-        ranked by global popularity so well-known songs surface first."""
+        """Case-insensitive search over song name / artist. Results are
+        ranked first by match quality (exact name match, then name starts
+        with the query, then artist starts with the query, then any
+        substring match), and by global popularity within each tier, so
+        the song you're actually looking for surfaces first instead of
+        being buried under unrelated songs that merely contain the same
+        substring somewhere in their title."""
         q = query.strip().lower()
         if not q:
             return []
         mi = self.music_info
-        mask = mi["name"].str.lower().str.contains(q, na=False) | \
-            mi["artist"].str.lower().str.contains(q, na=False)
+        name_lower = mi["name"].str.lower()
+        artist_lower = mi["artist"].str.lower()
+
+        mask = name_lower.str.contains(q, na=False) | \
+            artist_lower.str.contains(q, na=False)
         hits = mi[mask].copy()
         if hits.empty:
             return []
+
+        name_lower = name_lower[mask]
+        artist_lower = artist_lower[mask]
+
+        def _tier(name: str, artist: str) -> int:
+            if name == q:
+                return 0
+            if name.startswith(q):
+                return 1
+            if artist == q or artist.startswith(q):
+                return 2
+            return 3
+
+        hits["_tier"] = [
+            _tier(n, a) for n, a in zip(name_lower, artist_lower)
+        ]
         hits["pop"] = self.popularity[hits.index.values]
-        hits = hits.sort_values("pop", ascending=False).head(limit)
+        hits = hits.sort_values(
+            ["_tier", "pop"], ascending=[True, False]
+        ).head(limit)
         return [
             {"track_idx": i, "name": r["name"], "artist": r["artist"],
              "year": int(r["year"]), "tags": r["tags"]}
