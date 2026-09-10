@@ -67,7 +67,13 @@ def sha256(text: str) -> str:
 # --------------------------------------------------------------------------- #
 # session state
 # --------------------------------------------------------------------------- #
-for key, default in [("role", None), ("user_idx", None), ("username", None)]:
+for key, default in [
+    ("role", None),
+    ("user_idx", None),
+    ("username", None),
+    ("last_recommendation", None),
+    ("feedback_submitted", False),
+]:
     if key not in st.session_state:
         st.session_state[key] = default
 
@@ -185,6 +191,7 @@ def user_page(rec: HybridRecommender):
 
     query = st.text_input("🔎 Song name (or artist)", placeholder="e.g. Mr. Brightside")
     seed_track_idx = None
+    seed_label = None
     if query:
         hits = rec.search_tracks(query, limit=12)
         if not hits:
@@ -196,6 +203,7 @@ def user_page(rec: HybridRecommender):
             }
             choice = st.selectbox("Select the exact song", list(options.keys()))
             seed_track_idx = options[choice]
+            seed_label = choice
 
     top_n = st.number_input(
         "How many recommendations do you want?",
@@ -206,6 +214,7 @@ def user_page(rec: HybridRecommender):
     )
 
     if st.button("🎯 Recommend", type="primary", disabled=seed_track_idx is None):
+
         results = rec.recommend(
             user_idx=user_idx,
             seed_track_idx=seed_track_idx,
@@ -213,30 +222,158 @@ def user_page(rec: HybridRecommender):
             alpha=alpha,
             exclude_listened=exclude_listened,
         )
+        st.session_state["last_recommendation"] = {
+            "results": results,
+            "seed_track_idx": int(seed_track_idx),
+            "seed_song": seed_label,
+            "top_n": int(top_n),
+        }
+        st.session_state["feedback_submitted"] = False
+
+    last_rec = st.session_state.get("last_recommendation")
+
+    if last_rec is not None:
+        results = last_rec["results"]
+
         if not results:
             st.info(
-                "No recommendations found (try unchecking 'exclude already played')."
+                "No recommendations found "
+                "(try unchecking 'exclude already played')."
             )
         else:
             st.subheader(f"Top {len(results)} recommendations for you")
+
             for i, r in enumerate(results, 1):
                 with st.container(border=True):
                     c1, c2 = st.columns([4, 1])
+
                     with c1:
                         st.markdown(
-                            f"**{i}. {r['name']}** — {r['artist']} ({r['year']})"
+                            f"**{i}. {r['name']}** — "
+                            f"{r['artist']} ({r['year']})"
                         )
+
                         if isinstance(r["tags"], str) and r["tags"]:
                             st.caption(r["tags"])
+
                         st.progress(
                             r["hybrid_score"],
                             text=f"hybrid score {r['hybrid_score']:.2f}",
                         )
+
                     with c2:
-                        if isinstance(r["preview_url"], str) and r[
-                            "preview_url"
-                        ].startswith("http"):
+                        if (
+                            isinstance(r["preview_url"], str)
+                            and r["preview_url"].startswith("http")
+                        ):
                             st.audio(r["preview_url"])
+
+            if not st.session_state["feedback_submitted"]:
+
+                st.divider()
+                st.subheader("📝 User Satisfaction Questionnaire")
+
+                st.write(
+                    "Please rate the recommendation list based on your experience."
+                )
+
+                st.caption(
+                    "1 = Strongly Disagree · 2 = Disagree · "
+                    "3 = Neutral · 4 = Agree · 5 = Strongly Agree"
+                )
+
+                with st.form("user_feedback_form"):
+
+                    relevance = st.radio(
+                        "Q1. Relevance: The recommended songs are relevant to "
+                        "what I would like to listen to based on my selected song.",
+                        [1, 2, 3, 4, 5],
+                        index=None,
+                        horizontal=True,
+                    )
+
+                    novelty = st.radio(
+                        "Q2. Novelty / Discovery: The recommendation list helped "
+                        "me discover songs or artists that I had not considered before.",
+                        [1, 2, 3, 4, 5],
+                        index=None,
+                        horizontal=True,
+                    )
+
+                    diversity = st.radio(
+                        "Q3. Diversity: The recommendation list provides a good "
+                        "variety of songs instead of being too repetitive.",
+                        [1, 2, 3, 4, 5],
+                        index=None,
+                        horizontal=True,
+                    )
+
+                    satisfaction = st.radio(
+                        "Q4. Overall Satisfaction: Overall, I am satisfied with "
+                        "this recommendation list.",
+                        [1, 2, 3, 4, 5],
+                        index=None,
+                        horizontal=True,
+                    )
+
+                    feedback_submit = st.form_submit_button(
+                        "Submit Feedback",
+                        type="primary",
+                    )
+
+                if feedback_submit:
+
+                    if None in [
+                        relevance,
+                        novelty,
+                        diversity,
+                        satisfaction,
+                    ]:
+                        st.warning("Please answer all four questions.")
+
+                    else:
+                        feedback_file = os.path.join(
+                            os.path.dirname(os.path.abspath(__file__)),
+                            "user_feedback.csv",
+                        )
+
+                        feedback_row = pd.DataFrame([
+                            {
+                                "username": st.session_state["username"],
+                                "user_type": (
+                                    "new"
+                                    if is_new_user
+                                    else "existing"
+                                ),
+                                "seed_song": last_rec["seed_song"],
+                                "top_n": last_rec["top_n"],
+                                "relevance": relevance,
+                                "novelty": novelty,
+                                "diversity": diversity,
+                                "overall_satisfaction": satisfaction,
+                            }
+                        ])
+
+                        if os.path.exists(feedback_file):
+                            feedback_row.to_csv(
+                                feedback_file,
+                                mode="a",
+                                header=False,
+                                index=False,
+                            )
+                        else:
+                            feedback_row.to_csv(
+                                feedback_file,
+                                index=False,
+                            )
+
+                        st.session_state["feedback_submitted"] = True
+                        st.rerun()
+
+            else:
+                st.success("Thank you for your feedback!")
+
+
 
 
 # --------------------------------------------------------------------------- #
